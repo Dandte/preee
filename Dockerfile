@@ -16,8 +16,8 @@ WORKDIR /app
 # Copiar package files
 COPY package*.json ./
 
-# Instalar dependencias (sin package-lock.json)
-RUN npm install --omit=dev --ignore-scripts
+# Instalar dependencias
+RUN npm install --omit=dev
 
 # Copiar código
 COPY src ./src
