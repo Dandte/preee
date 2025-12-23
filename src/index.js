@@ -165,8 +165,8 @@ const scrapeSchema = {
         properties: {
             email: { type: 'string', format: 'email', minLength: 5 },
             password: { type: 'string', minLength: 4 },
-            status_filter: { type: 'string', enum: ['APPROVED', 'PENDING', 'REJECTED', 'CANCELLED', 'EXPIRED', null] },
-            limit: { type: 'integer', minimum: 10, maximum: 500, default: 100 },
+            status_filter: { type: 'string', enum: ['APPROVED', 'PENDING', 'REJECTED', 'CANCELLED', 'EXPIRED', 'ALL'], default: 'APPROVED' },
+            limit: { type: 'integer', minimum: 10, maximum: 1000, default: 200 },
             webhook_url: { type: 'string', format: 'uri' },
             timeout_ms: { type: 'integer', minimum: 30000, maximum: 600000 }
         }
@@ -536,13 +536,15 @@ class AddiScraper {
         };
     }
 
-    async extractAll(limit = 100) {
+    async extractAll(limit = 200) {
         const allTransactions = [];
         let offset = 0;
+        let pageNumber = 0;
+        const maxPages = 500; // Máximo de páginas para evitar loops infinitos
 
-        this.log('INFO', `Iniciando extracción (limit=${limit}, filter=${this.statusFilter})`);
+        this.log('INFO', `Iniciando extracción (limit=${limit}, filter=${this.statusFilter || 'APPROVED (default)'})`);
 
-        // Primera página
+        // Primera página para obtener el total
         let data = await this.fetchApiPage(limit, 0);
 
         let transactions, total;
@@ -560,15 +562,14 @@ class AddiScraper {
             this.log('INFO', `Total registros en ADDI: ${total}`);
         }
 
+        // Procesar primera página
         if (transactions.length > 0) {
-            this.log('INFO', `Primera página: ${transactions.length} transacciones`);
+            pageNumber++;
+            this.log('INFO', `Página ${pageNumber}: ${transactions.length} transacciones`);
+
             for (const tx of transactions) {
                 const parsed = this.parseTransaction(tx);
-                if (this.statusFilter) {
-                    if (parsed.status === this.statusFilter) {
-                        allTransactions.push(parsed);
-                    }
-                } else {
+                if (this.shouldIncludeTransaction(parsed)) {
                     allTransactions.push(parsed);
                 }
             }
@@ -577,17 +578,21 @@ class AddiScraper {
 
         scrapingStatus.extracted = allTransactions.length;
 
-        // Páginas siguientes
-        let consecutiveEmpty = 0;
+        // Calcular cuántas páginas necesitamos
+        const totalPages = this.totalRecords ? Math.ceil(this.totalRecords / limit) : maxPages;
+        this.log('INFO', `Páginas estimadas: ${totalPages}`);
 
-        while (true) {
+        // Continuar paginando hasta obtener todo
+        while (pageNumber < Math.min(totalPages, maxPages)) {
             this.checkAbort();
 
+            // Verificar si ya obtuvimos todos los registros conocidos
             if (this.totalRecords && offset >= this.totalRecords) {
-                this.log('INFO', `Alcanzado total (${this.totalRecords})`);
+                this.log('INFO', `Alcanzado total de registros (${this.totalRecords})`);
                 break;
             }
 
+            pageNumber++;
             data = await this.fetchApiPage(limit, offset);
 
             if (Array.isArray(data)) {
@@ -597,26 +602,15 @@ class AddiScraper {
             }
 
             if (transactions.length === 0) {
-                consecutiveEmpty++;
-                this.log('INFO', `Página vacía #${consecutiveEmpty} offset=${offset}`);
-                if (consecutiveEmpty >= 2) {
-                    this.log('INFO', '2 páginas vacías, terminando');
-                    break;
-                }
-                offset += limit;
-                continue;
+                this.log('INFO', `Página ${pageNumber} vacía (offset=${offset}), finalizando`);
+                break;
             }
 
-            consecutiveEmpty = 0;
-            this.log('INFO', `Página offset=${offset}: ${transactions.length} transacciones`);
+            this.log('INFO', `Página ${pageNumber}: ${transactions.length} transacciones (offset=${offset})`);
 
             for (const tx of transactions) {
                 const parsed = this.parseTransaction(tx);
-                if (this.statusFilter) {
-                    if (parsed.status === this.statusFilter) {
-                        allTransactions.push(parsed);
-                    }
-                } else {
+                if (this.shouldIncludeTransaction(parsed)) {
                     allTransactions.push(parsed);
                 }
             }
@@ -624,22 +618,36 @@ class AddiScraper {
             scrapingStatus.extracted = allTransactions.length;
 
             if (this.totalRecords) {
-                scrapingStatus.progress = Math.floor((offset / this.totalRecords) * 100);
+                scrapingStatus.progress = Math.min(99, Math.floor((offset / this.totalRecords) * 100));
             }
 
+            // Si recibimos menos del límite, es la última página
             if (transactions.length < limit) {
-                this.log('INFO', `Última página (${transactions.length} < ${limit})`);
+                this.log('INFO', `Última página detectada (${transactions.length} < ${limit})`);
                 break;
             }
 
             offset += limit;
-            await this.wait(300);
+            await this.wait(200); // Pequeña pausa entre requests
         }
 
         scrapingStatus.progress = 100;
-        this.log('INFO', `Extracción completada: ${allTransactions.length} transacciones`);
+        this.log('INFO', `Extracción completada: ${allTransactions.length} transacciones ${this.statusFilter || 'APPROVED'} de ${this.totalRecords || 'N/A'} totales`);
 
         return allTransactions;
+    }
+
+    shouldIncludeTransaction(parsed) {
+        // Si no hay filtro o filtro es APPROVED, solo incluir APPROVED
+        if (!this.statusFilter || this.statusFilter === 'APPROVED') {
+            return parsed.status === 'APPROVED';
+        }
+        // Si filtro es ALL, incluir todo
+        if (this.statusFilter === 'ALL') {
+            return true;
+        }
+        // Sino, filtrar por el status específico
+        return parsed.status === this.statusFilter;
     }
 
     async run(limit = 100) {
