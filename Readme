@@ -1,0 +1,131 @@
+# ADDI Scraper API - Node.js
+
+Microservicio para extraer transacciones de ADDI y sincronizarlas con GigaMovil.
+
+## Stack
+
+- **Runtime**: Node.js 20
+- **Framework**: Fastify (más rápido que Express)
+- **Scraping**: Puppeteer (mejor que Selenium para Node)
+- **Deploy**: Docker en EasyPanel
+
+## Ventajas vs Python/Selenium
+
+| Aspecto | Python + Selenium | Node.js + Puppeteer |
+|---------|------------------|---------------------|
+| Velocidad | Medio | Rápido |
+| Memoria | ~200MB | ~150MB |
+| Estabilidad | Buena | Excelente |
+| Detección anti-bot | Media | Mejor evasión |
+| Deploy en EasyPanel | Complejo | Simple |
+
+## Endpoints
+
+```
+GET  /                    - Info del servicio
+GET  /health              - Estado del servicio
+POST /scrape              - Scraping síncrono (espera resultado)
+POST /scrape/async        - Scraping en background
+GET  /scrape/status       - Estado del scraping async
+GET  /transactions        - Transacciones en cache
+GET  /debug/last-errors   - Últimos errores para debug
+```
+
+## Uso desde GigaMovil (Laravel)
+
+```php
+// En tu controlador Laravel
+use Illuminate\Support\Facades\Http;
+
+public function syncAddi()
+{
+    $response = Http::timeout(120)->post('https://tu-scraper.easypanel.host/scrape', [
+        'email' => config('addi.email'),
+        'password' => config('addi.password'),
+        'status_filter' => 'APPROVED', // opcional
+        'limit' => 100
+    ]);
+
+    if ($response->successful()) {
+        $data = $response->json();
+        
+        foreach ($data['transactions'] as $tx) {
+            // Sincronizar con tu base de datos
+            Transaction::updateOrCreate(
+                ['transaction_id' => $tx['transactionId']],
+                [
+                    'imei' => $tx['imei'],
+                    'client_name' => $tx['clientName'],
+                    'amount' => $tx['amount'],
+                    'status' => $tx['status'],
+                    // ... más campos
+                ]
+            );
+        }
+        
+        return response()->json([
+            'success' => true,
+            'synced' => count($data['transactions'])
+        ]);
+    }
+
+    return response()->json([
+        'success' => false,
+        'error' => $response->json('error')
+    ], 500);
+}
+```
+
+## Deploy en EasyPanel
+
+### Opción 1: Desde GitHub
+
+1. Sube este código a un repo de GitHub
+2. En EasyPanel → New Service → App
+3. Source: GitHub → selecciona el repo
+4. Build: Dockerfile
+5. Port: 8000
+6. Deploy
+
+### Opción 2: Docker Image
+
+```bash
+# Build local
+docker build -t addi-scraper .
+
+# Push a Docker Hub
+docker tag addi-scraper tu-usuario/addi-scraper:latest
+docker push tu-usuario/addi-scraper:latest
+```
+
+En EasyPanel: New Service → Docker Image → `tu-usuario/addi-scraper:latest`
+
+## Variables de Entorno
+
+```env
+PORT=8000  # Puerto del servicio (default: 8000)
+```
+
+## Desarrollo Local
+
+```bash
+# Instalar dependencias
+npm install
+
+# Ejecutar en desarrollo
+npm run dev
+
+# Ejecutar en producción
+npm start
+```
+
+## Estructura
+
+```
+addi-scraper-nodejs/
+├── Dockerfile
+├── package.json
+├── README.md
+└── src/
+    └── index.js       # Todo el código del scraper
+```

@@ -1,0 +1,19 @@
+{
+  "name": "addi-scraper-api",
+  "version": "1.2.0",
+  "description": "Microservicio para extraer transacciones de ADDI - GigaMovil",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1",
+    "@fastify/cors": "^9.0.1",
+    "puppeteer": "^22.15.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
